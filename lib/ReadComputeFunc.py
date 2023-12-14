@@ -83,7 +83,7 @@ def GenerateCrossSection(Omegas, LineCenterDB, LineIntensityDB, LowerStateEnergy
             raise("Error")
         #The Doppler Broadening coefficients
         GammaD = np.sqrt(2*cBolts*Temp*np.log(2)/m/cc**2)*LineCenter
-
+        
         #Scale the line intensity with the temperature
         ch = np.exp(-const_R*LowerStateEnergy/Temp)*(1-np.exp(-const_R*LineCenter/Temp))
         zn = np.exp(-const_R*LowerStateEnergy/Tref)*(1-np.exp(-const_R*LineCenter/Tref))
@@ -102,3 +102,116 @@ def GenerateCrossSection(Omegas, LineCenterDB, LineIntensityDB, LowerStateEnergy
         i+=1
 
     return Xsect
+
+
+
+
+def ReadData_H2(MoleculeName, Location="data_H2/"):
+    """
+    The same function as ReadData, but modified such that data for H2 and He broadening are expected.
+    Parameters
+    ----------------------------------------------------------------------------
+    MoleculeName: The name of the molecule for which the cross-section is being
+                  generated.
+    Location: Location where the datis looked at
+    """
+    if len(Location)>0.5:
+        if Location[-1]=="/":
+            DataFiles = glob.glob(Location+"*.data")
+        else:
+            DataFiles = glob.glob(Location+"/*.data")
+    else:
+        DataFiles = glob.glob("data/*.data")
+    DataFiles = np.array(DataFiles)
+    AllMolNames = np.array([Item.split("/")[-1][:-5].upper() for Item in DataFiles])
+
+    SelectIndex = AllMolNames == MoleculeName.upper()
+
+    assert np.sum(SelectIndex)==1, "No files found for the molecule"
+
+    Data = open(DataFiles[SelectIndex][0],'r').readlines()
+    
+    Entries = []
+    for Item in Data:
+        Entries.append(Item.split(",")[1:])
+    Entries = np.array(Entries)       
+    
+    gamma_H2 = np.array([float(Item[0]) for Item in Entries])
+    gamma_He = np.array([float(Item[1]) for Item in Entries])
+    n_H2 = np.array([float(Item[2]) for Item in Entries])
+    n_He = np.array([float(Item[3]) for Item in Entries])
+
+
+
+    MoleculeNumberDB = int(Data[0][0:2].replace(" ",""))
+    IsoNumberDB = int(Data[0][2:3].replace(" ",""))
+
+    #Read the important parameters from the file
+    LineCenterDB = np.array([float(Item[3:15]) for Item in Data])
+    LineIntensityDB = np.array([float(Item[16:26]) for Item in Data])
+    LowerStateEnergyDB = np.array([float(Item[46:56].replace("-","")) for Item in Data])
+    GammaSelf = np.array([float(Item[40:46]) for Item in Data])
+    GammaAir = np.array([float(Item[35:40]) for Item in Data])
+    DeltaAir = np.array([float(Item[59:68]) for Item in Data])
+
+    #Temperature Dependence of Gamma0
+    TempRatioPower = np.array([float(Item[55:59]) for Item in Data])
+
+    #The value of the error values. Keep them as string to preserve 0 at the beginning.
+    ErrorArray = np.array([Item[127:133] for Item in Data])
+
+    return MoleculeNumberDB, IsoNumberDB, LineCenterDB, LineIntensityDB, LowerStateEnergyDB, GammaSelf, GammaAir, DeltaAir, TempRatioPower, ErrorArray, gamma_H2, gamma_He, n_H2, n_He  
+
+       
+
+
+def GenerateCrossSection_H2(Omegas, LineCenterDB, LineIntensityDB, LowerStateEnergyDB,\
+                         gamma_H2, gamma_He, n_H2, n_He, LINE_PROFILE,\
+                         Params):
+    """
+    Parameters
+    --------------------------------------
+    Omega: The wavegrid of the WaveNumber
+    LineCenterDB: The line center from the HITRAN database
+    LineIntensityDB: The line intensity from the HITRAN database
+    LowerStateEnergyDB: LowerStateEnergyDB from lower state energy
+    GammaSelf: The self broadening parameters
+    TempRatioPower: Parameter for scaling the self broadening parameters in temperature
+    LINE_PROFILE: PROFILE_VOIGT, PROFILE_DOPPLER, PROFILE_LORENTZ are the
+    """
+    
+    P, Temp, OmegaWing, OmegaWingHW, m, SigmaT, SigmaTref, factor = Params
+    
+    i = 0
+    Xsect = np.zeros(len(Omegas), dtype=np.float32)
+    NLINES = len(LineCenterDB)
+
+    for i in range(NLINES):
+        LineCenter = LineCenterDB[i]
+        LowerStateEnergy = LowerStateEnergyDB[i]
+
+        gamma0_H2 = gamma_H2[i]*P/Pref*(Tref/Temp)**n_H2[i]
+        gamma0_He = gamma_He[i]*P/Pref*(Tref/Temp)**n_He[i]
+            
+        Gamma0 = 0.157*gamma0_He + 0.843*gamma0_H2
+        #The Doppler Broadening coefficients
+        GammaD = np.sqrt(2*cBolts*Temp*np.log(2)/m/cc**2)*LineCenter
+
+        #Scale the line intensity with the temperature
+        ch = np.exp(-const_R*LowerStateEnergy/Temp)*(1-np.exp(-const_R*LineCenter/Temp))
+        zn = np.exp(-const_R*LowerStateEnergy/Tref)*(1-np.exp(-const_R*LineCenter/Tref))
+        LineIntensity = LineIntensityDB[i]*SigmaTref/SigmaT*ch/zn
+        OmegaWingF = 25.0 #max([OmegaWing,OmegaWingHW*OmegaV])
+        
+
+        #Find the range to calculate the value:::
+        BoundIndexLower = bisect(Omegas,LineCenter-OmegaWingF)
+        BoundIndexUpper = bisect(Omegas,LineCenter+OmegaWingF)
+
+        lineshape_vals = LINE_PROFILE(LineCenter,GammaD,Gamma0,Omegas[BoundIndexLower:BoundIndexUpper])
+        Xsect[BoundIndexLower:BoundIndexUpper] += factor*LineIntensity*lineshape_vals
+
+        i+=1
+
+    return Xsect
+

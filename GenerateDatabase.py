@@ -49,7 +49,7 @@ WaveLengthRange = WaveLengthRange[::-1]
 
 
 #Now get the assign the resolution values
-Resolution = 10000
+Resolution = 1000
 
 #Low resolution wavelength
 Wavelength_LR, WaveNumber_LR = GetWaveNumbers(LowWavelength, HighWavelength, Resolution)
